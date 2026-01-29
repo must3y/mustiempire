@@ -10,7 +10,7 @@ app = Flask(__name__)
 bcrypt = Bcrypt(app)
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
-# RULET MOTORU KONTROLÜ
+# RULET MOTORU İÇİN KONTROL DEĞİŞKENİ
 game_thread_started = False
 
 def init_db():
@@ -32,24 +32,6 @@ def init_db():
 init_db()
 
 game = {"timer": 15, "active_bets": {"T":[], "Dice":[], "CT":[]}, "history": [], "betting_open": True, "online_users": {}}
-
-# YARDIMCI: DB'den güncel bakiye çekme
-def get_user_balance_from_db(username):
-    conn = sqlite3.connect('database.db')
-    c = conn.cursor()
-    c.execute("SELECT balance FROM users WHERE username = ?", (username,))
-    row = c.fetchone()
-    conn.close()
-    return row[0] if row else 0
-
-# FİX: Admin Listesi (Her seferinde taze DB verisi çeker)
-def get_all_users_for_admin():
-    conn = sqlite3.connect('database.db')
-    c = conn.cursor()
-    c.execute("SELECT username, balance, role, is_muted FROM users ORDER BY balance DESC")
-    res = [{"user": r[0], "bal": r[1], "role": r[2], "muted": r[3]} for r in c.fetchall()]
-    conn.close()
-    return res
 
 def game_loop():
     while True:
@@ -110,7 +92,7 @@ def login(d):
         emit('load_chat', [{"user": r[0], "text": r[1], "role": r[2], "level": r[3]} for r in reversed(c.fetchall())])
     conn.close()
 
-# FİX: Leaderboard artık bakiye kısmını taze çeker
+# FİX: Leaderboard artık bakiye kısmını bellekteki hatalı veriden değil, direkt DB'den çeker
 @socketio.on('get_leaderboard')
 def leaderboard():
     conn = sqlite3.connect('database.db')
@@ -153,7 +135,6 @@ def free():
         emit('auth_res', {"status":"error", "msg":f"{diff.seconds//3600} saat sonra gel!"})
     conn.close()
 
-# FİX: Admin Action (Coin ekleyip çıkarınca listeyi taze gönderir)
 @socketio.on('admin_action')
 def admin_act(d):
     u = game["online_users"].get(request.sid)
@@ -166,21 +147,34 @@ def admin_act(d):
     elif d['type'] == 'unmute': 
         c.execute("UPDATE users SET is_muted = 0 WHERE username = ?", (d['target'],))
         socketio.emit('receive_msg', {"user": "SYSTEM", "text": f"{d['target']} susturulması kaldırıldı.", "role": "admin", "level": 99})
-    elif d['type'] == 'add_coin': 
-        c.execute("UPDATE users SET balance = balance + ? WHERE username = ?", (d['amt'], d['target']))
-    elif d['type'] == 'remove_coin': 
-        c.execute("UPDATE users SET balance = balance - ? WHERE username = ?", (d['amt'], d['target']))
+    elif d['type'] == 'add_coin': c.execute("UPDATE users SET balance = balance + ? WHERE username = ?", (d['amt'], d['target']))
+    elif d['type'] == 'remove_coin': c.execute("UPDATE users SET balance = balance - ? WHERE username = ?", (d['amt'], d['target']))
     conn.commit(); conn.close()
     
-    # Online olan kullanıcının ekranını anlık güncelle
     for sid, usr in game["online_users"].items():
         if usr['username'] == d['target']:
-            new_val = get_user_balance_from_db(d['target'])
-            usr['balance'] = new_val
-            emit('update_balance', new_val, to=sid)
-            
-    # Admin panelindeki listeyi sana taze olarak geri yolla
+            if d['type'] == 'mute': usr['is_muted'] = 1
+            elif d['type'] == 'unmute': usr['is_muted'] = 0
+            elif 'coin' in d['type']:
+                # DB'deki en güncel halini yansıtalım
+                usr['balance'] = get_current_balance_from_db(d['target'])
+                emit('update_balance', usr['balance'], to=sid)
     emit('admin_list_res', get_all_users_for_admin())
+
+# FİX: Admin Paneli Listesi artık statik belleğe değil, o anki DB bakiyelerine bakar
+def get_all_users_for_admin():
+    conn = sqlite3.connect('database.db')
+    c = conn.cursor()
+    c.execute("SELECT username, balance, role, is_muted FROM users ORDER BY balance DESC")
+    res = [{"user": r[0], "bal": r[1], "role": r[2], "muted": r[3]} for r in c.fetchall()]
+    conn.close(); return res
+
+def get_current_balance_from_db(username):
+    conn = sqlite3.connect('database.db')
+    c = conn.cursor()
+    c.execute("SELECT balance FROM users WHERE username = ?", (username,))
+    res = c.fetchone()[0]
+    conn.close(); return res
 
 @socketio.on('get_admin_data')
 def send_admin(): emit('admin_list_res', get_all_users_for_admin())
@@ -212,6 +206,11 @@ def bet(d):
     u = game["online_users"].get(request.sid)
     if u and game["betting_open"] and u['balance'] >= d['amount'] > 0:
         u['balance'] -= d['amount']
+        # Bahis yapınca bakiyeyi veritabanına da düşelim ki panelde doğru gözüksün
+        conn = sqlite3.connect('database.db'); c = conn.cursor()
+        c.execute("UPDATE users SET balance = balance - ? WHERE username = ?", (d['amount'], u['username']))
+        conn.commit(); conn.close()
+        
         game["active_bets"][d["side"]].append({"user": u['username'], "amount": d['amount']})
         emit('update_balance', u['balance'])
         socketio.emit('new_bet', {"side": d["side"], "bet": {"user": u['username'], "amount": d['amount']}})
