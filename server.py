@@ -3,10 +3,12 @@ eventlet.monkey_patch()
 from flask import Flask, render_template, request
 from flask_socketio import SocketIO, emit
 from flask_bcrypt import Bcrypt
-import sqlite3, random, time, threading
+import sqlite3, random, time, threading, os
 from datetime import datetime, timedelta
 
 app = Flask(__name__)
+# Gizli anahtar eklemek bazı session hatalarını önler
+app.config['SECRET_KEY'] = 'gizli-anahtar-123'
 bcrypt = Bcrypt(app)
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
@@ -15,15 +17,15 @@ def init_db():
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS users 
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, 
-                  username TEXT UNIQUE, password TEXT, 
-                  balance REAL DEFAULT 1000.0, role TEXT DEFAULT 'user',
-                  xp INTEGER DEFAULT 0, level INTEGER DEFAULT 1,
-                  total_won REAL DEFAULT 0, total_lost REAL DEFAULT 0,
-                  created_at TEXT, last_claim TEXT DEFAULT '2000-01-01 00:00:00',
-                  is_muted INTEGER DEFAULT 0)''')
+                 username TEXT UNIQUE, password TEXT, 
+                 balance REAL DEFAULT 1000.0, role TEXT DEFAULT 'user',
+                 xp INTEGER DEFAULT 0, level INTEGER DEFAULT 1,
+                 total_won REAL DEFAULT 0, total_lost REAL DEFAULT 0,
+                 created_at TEXT, last_claim TEXT DEFAULT '2000-01-01 00:00:00',
+                 is_muted INTEGER DEFAULT 0)''')
     c.execute('''CREATE TABLE IF NOT EXISTS chat_history 
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, 
-                  username TEXT, message TEXT, role TEXT, level INTEGER)''')
+                 username TEXT, message TEXT, role TEXT, level INTEGER)''')
     conn.commit(); conn.close()
 
 init_db()
@@ -78,7 +80,6 @@ def login(d):
         user_data = {"username": d['user'], "balance": u[1], "role": role, "xp": u[3], "level": u[4], "total_won": u[5], "total_lost": u[6], "created_at": u[7], "is_muted": u[8]}
         game["online_users"][request.sid] = user_data
         emit('login_success', user_data)
-        # Giriş yapana o anki bahisleri gönder
         for side, bets in game["active_bets"].items():
             for b in bets: emit('new_bet', {"side": side, "bet": b})
         c.execute("SELECT username, message, role, level FROM chat_history ORDER BY id DESC LIMIT 50")
@@ -192,6 +193,8 @@ def bet(d):
         emit('update_balance', u['balance'])
         socketio.emit('new_bet', {"side": d["side"], "bet": {"user": u['username'], "amount": d['amount']}})
 
+# RENDER.COM PORT AYARI BURASI
 if __name__ == '__main__':
     threading.Thread(target=game_loop, daemon=True).start()
-    socketio.run(app, host='0.0.0.0', port=5000)
+    port = int(os.environ.get("PORT", 5000))
+    socketio.run(app, host='0.0.0.0', port=port)
