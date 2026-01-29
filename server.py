@@ -32,7 +32,7 @@ init_db()
 
 game = {"timer": 15, "active_bets": {"T":[], "Dice":[], "CT":[]}, "history": [], "betting_open": True, "online_users": {}}
 
-# --- RULET DİZİLİMİ VE SONUÇ MOTORU (YENİ SOSYAL DÜZEN) ---
+# --- RULET MOTORU (RENK DİZİLİMİ BURADA DÜZELİYOR) ---
 def game_loop():
     while True:
         game["betting_open"] = True
@@ -44,8 +44,8 @@ def game_loop():
         game["betting_open"] = False
         socketio.emit('lock_bets')
         
-        # 0'dan 14'e kadar bir çark düşün: 0=Dice, Tekler=T-Side, Çiftler=CT-Side
-        # Bu sayede çark: Dice - T - CT - T - CT... şeklinde akar (Kırmızı-Mavi karışık)
+        # 0'dan 14'e kadar indexler: 0=Dice, Tekler=Kırmızı(T), Çiftler=Mavi(CT)
+        # Bu matematiksel dizilim sayesinde renkler blok şeklinde değil, ardışık gelir.
         target_index = random.randint(30, 60)
         pos = target_index % 15
         
@@ -80,7 +80,7 @@ def game_loop():
         game["active_bets"] = {"T":[], "Dice":[], "CT":[]}
         socketio.emit('reset_wheel', {"history": game["history"][:10]})
 
-# --- DİĞER FONKSİYONLAR (BOZMADAN AYNEN KALIYOR) ---
+# --- DİĞER FONKSİYONLAR (BAKİYE VE ADMIN FİXLERİYLE BİRLİKTE) ---
 @app.route('/')
 def index(): return render_template('index.html')
 
@@ -111,34 +111,7 @@ def leaderboard():
     top_won = [{"user": r[0], "val": r[1]} for r in c.fetchall()]
     c.execute("SELECT username, balance FROM users ORDER BY balance DESC LIMIT 10")
     top_bal = [{"user": r[0], "val": r[1]} for r in c.fetchall()]
-    conn.close()
-    emit('leaderboard_res', {"top_won": top_won, "top_bal": top_bal})
-
-@socketio.on('get_claim_time')
-def get_claim_time():
-    u = game["online_users"].get(request.sid)
-    if not u: return
-    conn = sqlite3.connect('database.db'); c = conn.cursor()
-    c.execute("SELECT last_claim FROM users WHERE username = ?", (u['username'],))
-    last_dt = datetime.strptime(c.fetchone()[0], '%Y-%m-%d %H:%M:%S')
-    target = last_dt + timedelta(hours=12); diff = (target - datetime.now()).total_seconds()
-    emit('claim_time_res', {"seconds": max(0, int(diff))}); conn.close()
-
-@socketio.on('claim_free')
-def free():
-    u = game["online_users"].get(request.sid)
-    if not u: return
-    conn = sqlite3.connect('database.db'); c = conn.cursor()
-    c.execute("SELECT last_claim FROM users WHERE username = ?", (u['username'],))
-    last_dt = datetime.strptime(c.fetchone()[0], '%Y-%m-%d %H:%M:%S')
-    target = last_dt + timedelta(hours=12)
-    if datetime.now() >= target:
-        u['balance'] += 100; now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        c.execute("UPDATE users SET balance=balance+100, last_claim=? WHERE username=?", (now, u['username']))
-        conn.commit(); emit('free_coin_res', {"new_bal": u['balance']})
-    else:
-        diff = target - datetime.now(); emit('auth_res', {"status":"error", "msg":f"{diff.seconds//3600} saat sonra gel!"})
-    conn.close()
+    conn.close(); emit('leaderboard_res', {"top_won": top_won, "top_bal": top_bal})
 
 @socketio.on('admin_action')
 def admin_act(d):
@@ -152,9 +125,8 @@ def admin_act(d):
     conn.commit(); conn.close()
     for sid, usr in game["online_users"].items():
         if usr['username'] == d['target']:
-            if 'coin' in d['type']:
-                usr['balance'] = get_current_balance_from_db(d['target'])
-                emit('update_balance', usr['balance'], to=sid)
+            usr['balance'] = get_current_balance_from_db(d['target'])
+            emit('update_balance', usr['balance'], to=sid)
     emit('admin_list_res', get_all_users_for_admin())
 
 def get_all_users_for_admin():
@@ -167,6 +139,18 @@ def get_current_balance_from_db(username):
     conn = sqlite3.connect('database.db'); c = conn.cursor()
     c.execute("SELECT balance FROM users WHERE username = ?", (username,))
     res = c.fetchone()[0]; conn.close(); return res
+
+@socketio.on('place_bet')
+def bet(d):
+    u = game["online_users"].get(request.sid)
+    if u and game["betting_open"] and u['balance'] >= d['amount'] > 0:
+        u['balance'] -= d['amount']
+        conn = sqlite3.connect('database.db'); c = conn.cursor()
+        c.execute("UPDATE users SET balance = balance - ? WHERE username = ?", (d['amount'], u['username']))
+        conn.commit(); conn.close()
+        game["active_bets"][d["side"]].append({"user": u['username'], "amount": d['amount']})
+        emit('update_balance', u['balance'])
+        socketio.emit('new_bet', {"side": d["side"], "bet": {"user": u['username'], "amount": d['amount']}})
 
 @socketio.on('get_admin_data')
 def send_admin(): emit('admin_list_res', get_all_users_for_admin())
@@ -190,18 +174,6 @@ def reg(d):
         conn.commit(); emit('auth_res', {"status": "success", "msg": "Kayıt Başarılı!"})
     except: emit('auth_res', {"status": "error", "msg": "İsim alınmış!"})
     conn.close()
-
-@socketio.on('place_bet')
-def bet(d):
-    u = game["online_users"].get(request.sid)
-    if u and game["betting_open"] and u['balance'] >= d['amount'] > 0:
-        u['balance'] -= d['amount']
-        conn = sqlite3.connect('database.db'); c = conn.cursor()
-        c.execute("UPDATE users SET balance = balance - ? WHERE username = ?", (d['amount'], u['username']))
-        conn.commit(); conn.close()
-        game["active_bets"][d["side"]].append({"user": u['username'], "amount": d['amount']})
-        emit('update_balance', u['balance'])
-        socketio.emit('new_bet', {"side": d["side"], "bet": {"user": u['username'], "amount": d['amount']}})
 
 if __name__ == '__main__':
     socketio.run(app, host='0.0.0.0', port=5000)
