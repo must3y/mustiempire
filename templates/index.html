@@ -17,9 +17,11 @@
         .wheel-strip { display: flex; position: absolute; transition: transform 6s cubic-bezier(0.1, 0, 0.1, 1); }
         .box { min-width: 75px; height: 100px; display: flex; align-items: center; justify-content: center; font-size: 25px; }
         .btn-gold { background: var(--accent); color: #000; padding: 8px 15px; border: none; border-radius: 4px; font-weight: bold; cursor: pointer; }
+        .adm-btn { color: #f1c40f; cursor: pointer; margin-right: 15px; font-size: 18px; display: none; }
+        #auth-modal, #admin-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); z-index: 1000; display: none; align-items: center; justify-content: center; }
         .box-ui { background: var(--panel); padding: 25px; border-radius: 10px; border: 1px solid #333; width: 450px; }
         .locked { filter: grayscale(1); pointer-events: none; opacity: 0.5; }
-        #crash-display { font-size: 60px; font-weight: bold; color: #2ecc71; margin: 20px 0; }
+        #claim-timer { font-family: monospace; font-size: 13px; color: #f39c12; margin-left: 5px; }
     </style>
 </head>
 <body>
@@ -32,6 +34,11 @@
         <button class="btn-gold" onclick="auth('register')" style="width:96%; margin-top:5px; background:#222; color:#fff;">KAYIT</button>
     </div></div>
 
+    <div id="admin-modal" onclick="this.style.display='none'"><div class="box-ui" onclick="event.stopPropagation()">
+        <h3 style="color:var(--accent); text-align:center;">ADMIN PANEL</h3>
+        <div id="admin-list" style="max-height:400px; overflow-y:auto;"></div>
+    </div></div>
+
     <div class="chat-sidebar">
         <div style="padding:15px; font-weight:bold; color:var(--accent); border-bottom:1px solid #222;">CANLI CHAT</div>
         <div id="chat-msgs"></div>
@@ -42,56 +49,55 @@
         <div class="navbar">
             <div class="nav-links">
                 <b style="color:var(--accent); font-size:20px; margin-right:10px;">MUSTI EMPIRE</b>
-                <span class="nav-link active" onclick="switchGame('roulette')">ROULETTE</span>
-                <span class="nav-link" onclick="switchGame('crash')">CRASH</span>
-                <span class="nav-link" onclick="switchGame('cf')">COIN FLIP</span>
-                <span class="nav-link" onclick="openLeaderboard()">LEADERBOARD</span>
+                <span class="nav-link active" id="nav-roulette" onclick="showGame()">ROULETTE</span>
+                <span class="nav-link" id="nav-lb" onclick="openLeaderboard()">LEADERBOARD</span>
+                <div id="free-coin-sec" style="display:none; align-items:center;">
+                    <span id="f-btn" class="nav-link" onclick="socket.emit('claim_free')" style="color:#2ecc71;">FREE COIN</span>
+                    <span id="claim-timer"></span>
+                </div>
             </div>
             <div id="u-ctrl" style="display:none; align-items:center;">
+                <span id="adm-trigger" class="adm-btn" onclick="openAdmin()">⚙️</span>
                 <b id="u-name" style="margin-right:15px;"></b>
                 <div style="background:#000; padding:5px 15px; border-radius:20px; border:1px solid var(--accent); color:var(--accent);"><span id="bal">0</span> C</div>
+                <button onclick="location.reload()" style="background:none; border:none; color:#e74c3c; cursor:pointer; margin-left:15px;">ÇIKIŞ</button>
             </div>
             <button id="l-btn" class="btn-gold" onclick="document.getElementById('auth-modal').style.display='flex'">GİRİŞ YAP</button>
         </div>
 
-        <div id="roulette-area" class="game-view" style="text-align:center; padding-top:50px;">
+        <div id="game-area" style="text-align:center; padding-top:50px;">
             <div id="timer" style="font-size:45px; font-weight:bold; color:var(--accent); margin-bottom:10px;">15s</div>
             <div class="roulette-box"><div style="position:absolute; left:50%; width:2px; height:100%; background:var(--accent); z-index:10; transform:translateX(-50%);"></div><div id="wheel" class="wheel-strip"></div></div>
             <div id="h-bar" style="display:flex; justify-content:center; gap:8px; margin-bottom:25px;"></div>
+            
             <div style="margin-bottom:25px;">
-                <input type="number" id="amt" value="10" style="width:100px; padding:10px; background:#000; border:1px solid #333; color:var(--accent); text-align:center;">
-                <button class="btn-gold" onclick="place('T')">T-SIDE</button>
-                <button class="btn-gold" onclick="place('Dice')">DICE</button>
-                <button class="btn-gold" onclick="place('CT')">CT-SIDE</button>
+                <input type="number" id="amt" value="10" style="width:100px; padding:10px; background:#000; border:1px solid #333; color:var(--accent); text-align:center; border-radius:5px;">
+                <button class="btn-gold" onclick="document.getElementById('amt').value *= 2">2x</button>
+                <button class="btn-gold" onclick="document.getElementById('amt').value = Math.floor(myData ? myData.balance : 0)">MAX</button>
+            </div>
+
+            <div id="b-area" style="display:flex; justify-content:center; gap:15px;">
+                <div style="width:240px; background:var(--panel); border-radius:8px; border-top:4px solid var(--t-color);"><button onclick="place('T')" style="width:100%; background:var(--t-color); color:#fff; border:none; padding:12px; cursor:pointer; font-weight:bold;">T-SIDE (x2)</button><div id="l-T" style="height:150px; overflow-y:auto; padding:5px;"></div></div>
+                <div style="width:240px; background:var(--panel); border-radius:8px; border-top:4px solid var(--dice-color);"><button onclick="place('Dice')" style="width:100%; background:var(--dice-color); color:#fff; border:none; padding:12px; cursor:pointer; font-weight:bold;">DICE (x14)</button><div id="l-Dice" style="height:150px; overflow-y:auto; padding:5px;"></div></div>
+                <div style="width:240px; background:var(--panel); border-radius:8px; border-top:4px solid var(--ct-color);"><button onclick="place('CT')" style="width:100%; background:var(--ct-color); color:#fff; border:none; padding:12px; cursor:pointer; font-weight:bold;">CT-SIDE (x2)</button><div id="l-CT" style="height:150px; overflow-y:auto; padding:5px;"></div></div>
             </div>
         </div>
 
-        <div id="crash-area" class="game-view" style="display:none; text-align:center; padding-top:80px;">
-            <div id="crash-timer" style="color:var(--accent); font-size:20px;"></div>
-            <div id="crash-display">1.00x</div>
-            <button id="crash-bet-btn" class="btn-gold" style="width:200px; padding:20px;" onclick="socket.emit('place_crash_bet', {amount: parseInt(document.getElementById('amt').value)})">BAHİS YAP</button>
-            <button id="cashout-btn" class="btn-gold" style="display:none; width:200px; padding:20px; background:#2ecc71;" onclick="socket.emit('crash_cashout')">BOZDUR</button>
-        </div>
-
-        <div id="cf-area" class="game-view" style="display:none; text-align:center; padding-top:100px;">
-            <div class="box-ui" style="margin:auto;">
-                <h2 style="color:var(--accent)">COIN FLIP</h2>
-                <div style="display:flex; justify-content:center; gap:20px; margin-top:20px;">
-                    <button class="btn-gold" style="background:var(--t-color); color:#fff;" onclick="socket.emit('place_coinflip', {side:'T', amount:parseInt(document.getElementById('amt').value)})">T-SIDE OYNA</button>
-                    <button class="btn-gold" style="background:var(--ct-color); color:#fff;" onclick="socket.emit('place_coinflip', {side:'CT', amount:parseInt(document.getElementById('amt').value)})">CT-SIDE OYNA</button>
-                </div>
+        <div id="lb-area" style="display:none; padding:50px; text-align:center;">
+            <h2 style="color:var(--accent)">SIRALAMA</h2>
+            <div style="display:flex; justify-content:center; gap:20px; margin-bottom:20px;">
+                <button class="btn-gold" id="btn-krallar" onclick="renderLB('won')">🏆 KRALLAR (KAZANÇ)</button>
+                <button class="btn-gold" id="btn-zenginler" style="background:#222; color:#fff;" onclick="renderLB('bal')">💰 ZENGİNLER (BAKİYE)</button>
             </div>
+            <div id="lb-content" class="box-ui" style="margin:0 auto; width:600px; text-align:left; border:1px solid #444;"></div>
         </div>
     </div>
 
     <script>
-        const socket = io();
+        const socket = io(); 
         let myData = null;
-
-        function switchGame(game) {
-            document.querySelectorAll('.game-view').forEach(v => v.style.display = 'none');
-            document.getElementById(game + '-area').style.display = 'block';
-        }
+        let lbData = null;
+        let claimSeconds = 0;
 
         function auth(t) { socket.emit(t, {user: document.getElementById('user-in').value, pw: document.getElementById('pass-in').value}); }
         
@@ -99,49 +105,121 @@
             myData = d; document.getElementById('auth-modal').style.display = 'none';
             document.getElementById('l-btn').style.display = 'none';
             document.getElementById('u-ctrl').style.display = 'flex';
+            document.getElementById('free-coin-sec').style.display = 'flex';
+            document.getElementById('chat-in').disabled = d.is_muted;
+            if(d.role === 'admin') document.getElementById('adm-trigger').style.display = 'inline';
             document.getElementById('u-name').innerText = d.username;
             document.getElementById('bal').innerText = Math.floor(d.balance);
-            document.getElementById('chat-in').disabled = false;
+            socket.emit('get_claim_time');
         });
 
-        // Crash Logic
-        socket.on('crash_timer', t => { 
-            document.getElementById('crash-timer').innerText = t > 0 ? "Başlıyor: " + t + "s" : "Başladı!";
-            document.getElementById('crash-display').style.color = "#2ecc71";
-            document.getElementById('crash-bet-btn').style.display = 'inline-block';
-            document.getElementById('cashout-btn').style.display = 'none';
-        });
-        socket.on('crash_update', m => { 
-            document.getElementById('crash-display').innerText = m.toFixed(2) + "x";
-            document.getElementById('crash-bet-btn').style.display = 'none';
-            document.getElementById('cashout-btn').style.display = 'inline-block';
-        });
-        socket.on('crash_end', m => {
-            document.getElementById('crash-display').innerText = "BOOM! " + m.toFixed(2) + "x";
-            document.getElementById('crash-display').style.color = "#e74c3c";
-            document.getElementById('cashout-btn').style.display = 'none';
+        // Sayaç Mantığı
+        setInterval(() => {
+            if(claimSeconds > 0) {
+                claimSeconds--;
+                let h = Math.floor(claimSeconds / 3600);
+                let m = Math.floor((claimSeconds % 3600) / 60);
+                let s = claimSeconds % 60;
+                document.getElementById('claim-timer').innerText = `(${h.toString().padStart(2,'0')}:${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')})`;
+                document.getElementById('f-btn').style.opacity = "0.5";
+                document.getElementById('f-btn').style.pointerEvents = "none";
+            } else if (myData) {
+                document.getElementById('claim-timer').innerText = "(HAZIR!)";
+                document.getElementById('f-btn').style.opacity = "1";
+                document.getElementById('f-btn').style.pointerEvents = "auto";
+            }
+        }, 1000);
+
+        socket.on('claim_time_res', d => { claimSeconds = d.seconds; });
+        socket.on('free_coin_res', d => { 
+            myData.balance = d.new_bal; 
+            document.getElementById('bal').innerText = Math.floor(d.new_bal); 
+            claimSeconds = 43200; 
+            alert("100 C Eklendi!"); 
         });
 
-        socket.on('cf_result', d => {
-            alert(d.res + " Geldi! " + (d.win > 0 ? "Kazandın: " + d.win : "Kaybettin!"));
-            document.getElementById('bal').innerText = Math.floor(d.new_bal);
-        });
+        // Alan Değiştirme
+        function showGame() {
+            document.getElementById('game-area').style.display = 'block';
+            document.getElementById('lb-area').style.display = 'none';
+            document.getElementById('nav-roulette').classList.add('active');
+            document.getElementById('nav-lb').classList.remove('active');
+        }
 
-        socket.on('update_balance', b => { document.getElementById('bal').innerText = Math.floor(b); });
-        socket.on('win_event', d => { alert("Kazandın: " + d.win); document.getElementById('bal').innerText = Math.floor(d.new_bal); });
+        function openLeaderboard() {
+            socket.emit('get_leaderboard');
+            document.getElementById('game-area').style.display = 'none';
+            document.getElementById('lb-area').style.display = 'block';
+            document.getElementById('nav-roulette').classList.remove('active');
+            document.getElementById('nav-lb').classList.add('active');
+        }
 
-        // Roulette Logic (Eski kodunla aynı)
-        socket.on('timer_update', d => document.getElementById('timer').innerText = d.time + "s");
-        socket.on('spin_start', d => { document.getElementById('wheel').style.transform = `translateX(-${(d.target_index * 75) - 337}px)`; });
-        socket.on('reset_wheel', d => {
-            let w = document.getElementById('wheel'); w.style.transition = "none"; w.style.transform = "translateX(0px)";
-            setTimeout(() => w.style.transition = "transform 6s cubic-bezier(0.1, 0, 0.1, 1)", 50);
+        socket.on('leaderboard_res', d => { lbData = d; renderLB('won'); });
+
+        function renderLB(type) {
+            let list = type === 'won' ? lbData.top_won : lbData.top_bal;
+            document.getElementById('btn-krallar').style.background = type === 'won' ? 'var(--accent)' : '#222';
+            document.getElementById('btn-zenginler').style.background = type === 'bal' ? 'var(--accent)' : '#222';
+            document.getElementById('btn-krallar').style.color = type === 'won' ? '#000' : '#fff';
+            document.getElementById('btn-zenginler').style.color = type === 'bal' ? '#000' : '#fff';
+
+            let h = "";
+            list.forEach((u, i) => {
+                h += `<div style="padding:12px; border-bottom:1px solid #333; display:flex; justify-content:space-between; align-items:center;">
+                        <span><b style="color:var(--accent)">#${i+1}</b> ${u.user}</span>
+                        <span style="font-weight:bold; color:#2ecc71">${Math.floor(u.val)} C</span>
+                      </div>`;
+            });
+            document.getElementById('lb-content').innerHTML = h || "Veri bulunamadı.";
+        }
+
+        // --- Mevcut Diğer Fonksiyonlar ---
+        socket.on('load_chat', logs => { logs.forEach(l => renderMsg(l)); });
+        socket.on('receive_msg', d => { renderMsg(d); let c = document.getElementById('chat-msgs'); c.scrollTop = c.scrollHeight; });
+        
+        function renderMsg(d) {
+            let isMust = d.user.toLowerCase() === 'must3y';
+            let color = isMust ? '#f1c40f' : (d.role === 'admin' ? '#f1c40f' : '#3498db');
+            let muteUI = (myData && myData.role === 'admin' && !isMust) ? 
+                ` <span style="color:#e74c3c;cursor:pointer" onclick="socket.emit('admin_action',{type:'mute',target:'${d.user}'})">[X]</span>
+                  <span style="color:#2ecc71;cursor:pointer" onclick="socket.emit('admin_action',{type:'unmute',target:'${d.user}'})">[OK]</span>` : "";
+            document.getElementById('chat-msgs').innerHTML += `<div style="margin-bottom:8px;"><b style="color:${color}">${d.user}:</b> ${d.text}${muteUI}</div>`;
+        }
+
+        function openAdmin() { socket.emit('get_admin_data'); document.getElementById('admin-modal').style.display='flex'; }
+        socket.on('admin_list_res', list => {
+            let h = document.getElementById('admin-list'); h.innerHTML = "";
+            list.forEach(u => {
+                h.innerHTML += `<div style="display:flex; justify-content:space-between; padding:8px; border-bottom:1px solid #222;">
+                    <span><b>${u.user}</b> (${Math.floor(u.bal)} C)</span>
+                    <div>
+                        <button onclick="socket.emit('admin_action',{type:'add_coin',target:'${u.user}',amt:500})" style="color:green">+500</button>
+                        <button onclick="socket.emit('admin_action',{type:'remove_coin',target:'${u.user}',amt:500})" style="color:red">-500</button>
+                    </div>
+                </div>`;
+            });
         });
 
         function place(s) { socket.emit('place_bet', {side: s, amount: parseInt(document.getElementById('amt').value)}); }
         function sendMsg() { let i = document.getElementById('chat-in'); if(i.value) { socket.emit('send_msg', i.value); i.value = ""; } }
         
-        // Roulette Wheel Generate
+        socket.on('timer_update', d => document.getElementById('timer').innerText = d.time + "s");
+        socket.on('lock_bets', () => document.getElementById('b-area').classList.add('locked'));
+        socket.on('spin_start', d => { document.getElementById('wheel').style.transform = `translateX(-${(d.target_index * 75) - 337}px)`; });
+        socket.on('reset_wheel', d => {
+            let w = document.getElementById('wheel'); w.style.transition = "none"; w.style.transform = "translateX(0px)";
+            setTimeout(() => w.style.transition = "transform 6s cubic-bezier(0.1, 0, 0.1, 1)", 50);
+            document.getElementById('b-area').classList.remove('locked');
+            let hb = document.getElementById('h-bar'); hb.innerHTML = "";
+            d.history.forEach(r => { hb.innerHTML += `<div style="width:12px; height:12px; border-radius:50%; background:var(--${r.toLowerCase()}-color)"></div>`; });
+            document.querySelectorAll('#b-area div[id^="l-"]').forEach(e => e.innerHTML = "");
+        });
+
+        socket.on('auth_res', d => alert(d.msg));
+        socket.on('update_balance', b => { if(myData) { myData.balance = b; document.getElementById('bal').innerText = Math.floor(b); }});
+        socket.on('win_event', d => { myData.balance = d.new_bal; document.getElementById('bal').innerText = Math.floor(d.new_bal); });
+        socket.on('new_bet', d => { document.getElementById('l-'+d.side).innerHTML = `<div style="font-size:12px;">${d.bet.user}: ${d.bet.amount}</div>` + document.getElementById('l-'+d.side).innerHTML; });
+
         let w = document.getElementById('wheel');
         for(let i=0; i<100; i++) {
             let n = i%15; let c = n==0?'var(--dice-color)':(n<=7?'var(--t-color)':'var(--ct-color)');
@@ -149,4 +227,5 @@
         }
     </script>
 </body>
+
 </html>
